@@ -103,10 +103,19 @@ lbox_snapshot(struct lua_State *L)
 	return luaT_error(L);
 }
 
+static int
+lbox_gc(struct lua_State *L)
+{
+	int64_t lsn = luaL_checkint64(L, 1);
+	box_gc(lsn);
+	return 0;
+}
+
 static const struct luaL_reg boxlib[] = {
 	{"commit", lbox_commit},
 	{"rollback", lbox_rollback},
 	{"snapshot", lbox_snapshot},
+	{"gc", lbox_gc},
 	{NULL, NULL}
 };
 

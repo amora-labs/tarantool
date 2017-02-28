@@ -59,6 +59,7 @@ t
   - cfg
   - commit
   - error
+  - gc
   - index
   - info
   - internal
