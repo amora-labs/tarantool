@@ -5934,9 +5934,7 @@ vy_index_get(struct vy_tx *tx, struct vy_index *index, const char *key,
 	ev_tstamp start  = ev_now(loop());
 	int64_t vlsn = INT64_MAX;
 	const int64_t *vlsn_ptr = &vlsn;
-	if (tx == NULL)
-		vlsn = e->xm->lsn;
-	else
+	if (tx != NULL)
 		vlsn_ptr = &tx->vlsn;
 
 	struct vy_read_iterator itr;
@@ -10088,7 +10086,7 @@ vy_cursor_new(struct vy_tx *tx, struct vy_index *index, const char *key,
 	c->env = e;
 	if (tx == NULL) {
 		tx = &c->tx_autocommit;
-		vy_tx_begin(e->xm, tx, VINYL_TX_RO);
+		vy_tx_begin(e->xm, tx, VINYL_TX_RW);
 	} else {
 		rlist_add(&tx->cursors, &c->next_in_tx);
 	}

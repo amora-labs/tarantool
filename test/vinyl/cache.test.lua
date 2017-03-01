@@ -8,6 +8,7 @@ i = s:create_index('test')
 str = string.rep('!', 100)
 
 for i = 1,1000 do s:insert{i, str} end
+box.snapshot()
 
 t = s:select{}
 
@@ -65,25 +66,19 @@ s:replace{3, 3, 4}
 box.snapshot()
 a = stat_changed() -- init
 
-box.begin()
 s:get{1, 2}
-box.commit()
 stat_changed()  -- cache miss, true
 
 s:get{1, 2}
 stat_changed() -- cache hit, false
 
-box.begin()
 s:select{1}
-box.commit()
 stat_changed()  -- cache miss, true
 
 s:select{1}
 stat_changed() -- cache hit, false
 
-box.begin()
 s:select{}
-box.commit()
 stat_changed()  -- cache miss, true
 
 s:select{}
@@ -110,9 +105,7 @@ s:replace{3, 3, 4}
 box.snapshot()
 a = stat_changed() -- init
 
-box.begin()
 s:select{}
-box.commit()
 stat_changed()  -- cache miss, true
 
 s:get{1, 2}
@@ -141,9 +134,7 @@ s:replace{2, 3, 2, str}
 s:replace{2, 4, 2, str}
 s:replace{3, 3, 4}
 
-box.begin()
 s:select{1}
-box.commit()
 
 s:replace{1, 1, 1, str}
 
@@ -161,10 +152,8 @@ s:replace{3, 3, 3}
 s:replace{4, 4, 4}
 s:replace{5, 5, 5}
 
-box.begin()
 i1:min()
 i1:max()
-box.commit()
 
 s:replace{0, 0, 0}
 s:replace{6, 6, 6}
