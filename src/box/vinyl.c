@@ -6955,13 +6955,8 @@ vy_commit(struct vy_env *e, struct vy_tx *tx, int64_t lsn)
 	 */
 	uint64_t write_count = 0;
 	const struct tuple *delete = NULL, *replace = NULL;
-	struct tuple *stmt = NULL;
-	struct vy_index *index = NULL;
-	enum iproto_type type;
 	enum vy_status status = e->status;
 	uint32_t current_space_id = 0;
-	uint32_t prev_index_id = 0;
-	int rc;
 	stailq_foreach_entry(v, &tx->log, next_in_log) {
 		/*
 		 * The tx log contains both read and write
@@ -6969,49 +6964,29 @@ vy_commit(struct vy_env *e, struct vy_tx *tx, int64_t lsn)
 		 */
 		if (v->is_read)
 			continue;
-		index = v->index;
-		stmt = v->stmt;
+		struct vy_index *index = v->index;
+		struct tuple *stmt = v->stmt;
 		vy_stmt_set_lsn(stmt, lsn);
-		type = vy_stmt_type(stmt);
+		enum iproto_type type = vy_stmt_type(stmt);
 		if (index->key_def->iid == 0) {
 			/*
 			 * The beginning of the new txn_stmt is
-			 * met. Each txn_stmt begins from a txv
-			 * in a primary index and changes one
-			 * space.
+			 * met.
 			 */
 			current_space_id = index->space->def.id;
-			prev_index_id = 0;
 			replace = NULL;
 			delete = NULL;
-			if (type == IPROTO_DELETE) {
-				rc = vy_tx_write(index, stmt, &delete, status);
-			} else {
-				assert(type == IPROTO_REPLACE ||
-				       index->space_index_count == 1);
-				rc = vy_tx_write(index, stmt, &replace, status);
-			}
-			if (rc != 0)
-				return -1;
-			write_count++;
-			continue;
 		}
 		assert(index->space->def.id == current_space_id);
-		assert(prev_index_id <= index->key_def->iid);
 		/*
 		 * In secondary indexes only REPLACE and DELETE
 		 * can be wrote.
 		 */
-		if (type == IPROTO_DELETE) {
-			rc = vy_tx_write(index, stmt, &delete, status);
-		} else {
-			assert(type == IPROTO_REPLACE);
-			rc = vy_tx_write(index, stmt, &replace, status);
-		}
-		if (rc != 0)
+		const struct tuple **region_stmt =
+			(type == IPROTO_DELETE) ? &delete : &replace;
+		if (vy_tx_write(index, stmt, region_stmt, status) != 0)
 			return -1;
 		write_count++;
-		prev_index_id = index->key_def->iid;
 	}
 
 	uint32_t count = 0;
@@ -10081,7 +10056,6 @@ vy_squash_process(struct vy_squash *squash)
 
 	struct vy_index *index = squash->index;
 	struct vy_env *env = index->env;
-	struct lsregion *allocator = &env->allocator;
 	struct key_def *key_def = index->key_def;
 	/* Upserts enabled only in the primary index. */
 	assert(key_def->iid == 0);
@@ -10148,13 +10122,7 @@ vy_squash_process(struct vy_squash *squash)
 	 * and adjust the quota.
 	 */
 	size_t mem_used_before = lsregion_used(&env->allocator);
-	lsn = env->xm->lsn;
-	const struct tuple *region_stmt =
-		vy_stmt_dup_lsregion(result, allocator, lsn);
-	if (region_stmt == NULL) {
-		tuple_unref(result);
-		return -1;
-	}
+	const struct tuple *region_stmt = NULL;
 	rc = vy_range_set(range, result, &region_stmt);
 	tuple_unref(result);
 	size_t mem_used_after = lsregion_used(&env->allocator);
