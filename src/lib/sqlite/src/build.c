@@ -2419,8 +2419,19 @@ void sqlite3CodeDropTable(Parse *pParse, Table *pTab, int iDb, int isView){
   ** database.
   */
   if( !isView && !IsVirtual(pTab) ){
+    if( pTab->pIndex && pTab->pIndex->pNext ){
+      /*  Remove all indexes, except for primary.
+          Tarantool won't allow remove primary when secondary exist. */
+      sqlite3NestedParse(pParse,
+                         "DELETE FROM %Q.%s WHERE id=%d AND iid>0",
+                         pDb->zDbSName,
+                         TARANTOOL_SYS_INDEX_NAME,
+                         SQLITE_PAGENO_TO_SPACEID(pTab->tnum));
+    }
+
+    /*  Remove primary index. */
     sqlite3NestedParse(pParse,
-                       "DELETE FROM %Q.%s WHERE id=%d",
+                       "DELETE FROM %Q.%s WHERE id=%d AND iid=0",
                        pDb->zDbSName,
                        TARANTOOL_SYS_INDEX_NAME,
                        SQLITE_PAGENO_TO_SPACEID(pTab->tnum));
