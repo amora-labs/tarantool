@@ -30,6 +30,7 @@
  */
 #include "tuple_compare.h"
 #include "tuple.h"
+#include <math.h>
 
 /* {{{ tuple_compare */
 
@@ -122,14 +123,130 @@ mp_compare_number(const char *field_a, const char *field_b)
 	enum mp_type b_type = mp_typeof(*field_b);
 	assert(mp_classof(a_type) == MP_CLASS_NUMBER);
 	assert(mp_classof(b_type) == MP_CLASS_NUMBER);
-	if (a_type == MP_FLOAT || a_type == MP_DOUBLE ||
-	    b_type == MP_FLOAT || b_type == MP_DOUBLE) {
-		double a_val, b_val;
-		if (mp_read_double(&field_a, &a_val) != 0 ||
-		    mp_read_double(&field_b, &b_val) != 0)
-			unreachable();
+
+	double a_val, b_val;
+	int k = 1;
+
+	/* float/double B? */
+	if (b_type == MP_FLOAT) {
+		b_val = mp_decode_float(&field_b);
+		goto check_a_type;
+	} else if (b_type == MP_DOUBLE) {
+		b_val = mp_decode_double(&field_b);
+check_a_type:
+		assert(b_type == MP_FLOAT || b_type == MP_DOUBLE);
+
+		/* float/double A? */
+		if (a_type == MP_FLOAT) {
+			a_val = mp_decode_float(&field_a);
+		} else if (a_type == MP_DOUBLE) {
+			a_val = mp_decode_double(&field_a);
+		} else {
+			/*
+			 * A is neither float nor double (hence int/uint),
+			 * but B is float/double.
+			 * Reduce to float/double VS. int/uint by
+			 * exploiting symmetry (swap a and b.)
+			 */
+			k = -1; /* result is to be inverted */
+			a_val = b_val;
+			b_type = a_type;
+			field_b = field_a;
+			/*
+			 * Immediately after goto is taken, there's an
+			 * assertion that a_type is float/double.
+			 * Set a_type to MP_DOUBLE but only when asserts
+			 * are enabled.
+			 */
+			assert((a_type = MP_DOUBLE));
+			goto check_b_type;
+		}
+		/* both A and B are float/double */
 		return COMPARE_RESULT(a_val, b_val);
 	}
+
+	/* handle float/double A */
+	if (a_type == MP_FLOAT) {
+		a_val = mp_decode_float(&field_a);
+		goto check_b_type;
+	} else if (a_type == MP_DOUBLE) {
+		a_val = mp_decode_double(&field_a);
+check_b_type:
+		assert(a_type == MP_FLOAT || a_type == MP_DOUBLE);
+		/*
+		 * A is float/double and B is int/uint.
+		 * It's not possible for B to be a floating point, since
+		 * we've already checked B.
+		 * We could have arrived here with A and B swapped.
+		 * In the later case, k==-1, otherwize k==1.
+		 */
+		uint64_t b_uval;
+		if (b_type == MP_INT) {
+			/* reduce to uint case */
+			int64_t b_ival = mp_decode_int(&field_b);
+			if (b_ival < 0) {
+				/*
+				 * a == b implies -a == -b
+				 * a < b  implies -a > -b
+				 * a > b  implies -a < -b
+				 *
+				 * I.e. flip signs and invert the result
+				 */
+				k = -k;
+				b_uval = -b_ival;
+				a_val = -a_val;
+			} else {
+				b_uval = b_ival;
+			}
+			goto cmp_double_uint64;
+		} else {
+			assert(b_type == MP_UINT);
+			b_uval = mp_decode_uint(&field_b);
+cmp_double_uint64:
+			/*
+			 * IEEE double represents 2^N precisely.
+			 * The value below is 2^53.
+			 * If a double exceeds this threshold, there's
+			 * no fractional part. Moreover, the "next"
+			 * float is 2^53+2, i.e. there's not enough
+			 * precision to encode even some "odd" integers.
+			 * Note: ">=" is important, see next block.
+			 */
+			if (a_val >= exp2(53)) {
+
+				/*
+				* The value below is 2^64.
+				* Note: UINT64_MAX is 2^64-1, hence ">="
+				*/
+				if (a_val >= exp2(64))
+					return k;
+
+				/* Within [2^53, 2^64) double->uint64_t
+				 * is losless. */
+				assert((double)(uint64_t)a_val == a_val);
+				return k*COMPARE_RESULT(
+					(uint64_t)a_val, b_uval
+				);
+			}
+
+			/*
+			 * If B < 2^53, uint64_t->double is losless.
+			 * Otherwize the value may get rounded.
+			 * It's unspecified whether it gets rounded up
+			 * or down, i.e. the conversion may yield 2^53
+			 * for a B > 2^53.
+			 * Since we've aready ensured that A < 2^53, the
+			 * result is still correct even if rounding
+			 * happens.
+			 */
+			assert(a_val < exp2(53));
+			assert((uint64_t)(double)b_uval == b_uval ||
+			       b_uval >= (UINT64_C(1)<<53));
+			return k*COMPARE_RESULT(a_val, (double)b_uval);
+		}
+	}
+
+	/* Neither A nor B is float/double. */
 	return mp_compare_integer(field_a, field_b);
 }
 

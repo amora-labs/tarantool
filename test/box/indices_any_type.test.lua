@@ -18,3 +18,79 @@ i3_2:select({"str", 5})
 i3_2:select({"foobar", "36.6"})
 
 s3:drop()
+
+-- #2112 int vs. double compare
+s5 = box.schema.space.create('my_space5')
+_ = s5:create_index('primary', {parts={1, 'scalar'}})
+-- small range 1
+s5:insert({5})
+s5:insert({5.1})
+s5:select()
+s5:truncate()
+-- small range 2
+s5:insert({5.1})
+s5:insert({5})
+s5:select()
+s5:truncate()
+-- small range 3
+s5:insert({-5})
+s5:insert({-5.1})
+s5:select()
+s5:truncate()
+-- small range 4
+s5:insert({-5.1})
+s5:insert({-5})
+s5:select()
+s5:truncate()
+-- conversion to another type is lossy for both values
+s5:insert({18446744073709551615ULL})
+s5:insert({3.6893488147419103e+19})
+s5:select()
+s5:truncate()
+-- insert in a different order to excersise another codepath
+s5:insert({3.6893488147419103e+19})
+s5:insert({18446744073709551615ULL})
+s5:select()
+s5:truncate()
+-- MP_INT vs MP_UINT
+s5:insert({-9223372036854775808LL})
+s5:insert({-3.6893488147419103e+19})
+s5:select()
+s5:truncate()
+-- insert in a different order to excersise another codepath
+s5:insert({-3.6893488147419103e+19})
+s5:insert({-9223372036854775808LL})
+s5:select()
+s5:truncate()
+-- different signs 1
+s5:insert({9223372036854775807LL})
+s5:insert({-3.6893488147419103e+19})
+s5:select()
+s5:truncate()
+-- different signs 2
+s5:insert({-3.6893488147419103e+19})
+s5:insert({9223372036854775807LL})
+s5:select()
+s5:truncate()
+-- different signs 3
+s5:insert({-9223372036854775808LL})
+s5:insert({3.6893488147419103e+19})
+s5:select()
+s5:truncate()
+-- different signs 4
+s5:insert({3.6893488147419103e+19})
+s5:insert({-9223372036854775808LL})
+s5:select()
+s5:truncate()
+-- different magnitude 1
+s5:insert({1.1})
+s5:insert({18446744073709551615ULL})
+s5:select()
+s5:truncate()
+-- different magnitude 2
+s5:insert({18446744073709551615ULL})
+s5:insert({1.1})
+s5:select()
+s5:truncate()
+
+s5:drop()
