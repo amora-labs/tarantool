@@ -37,6 +37,7 @@
 #include <fiber.h>
 #include "xrow.h"
 #include "iproto_constants.h"
+#include "ipc.h"
 
 enum {
 	/**
@@ -49,6 +50,8 @@ enum {
 double too_long_threshold;
 /** Pool of transaction objects. */
 static struct mempool txn_pool;
+bool in_two_phase_transaction = false;
+struct ipc_cond two_phase_txn_cond;
 
 void
 xrow_header_encode_2pc(struct xrow_header *header, struct txn *txn,
@@ -207,6 +210,10 @@ txn_write_prepare_to_wal(struct txn *txn, struct xrow_header *prepare_header)
 {
 	assert(txn->n_rows > 0);
 	assert(prepare_header->type == IPROTO_PREPARE);
+	/* There is another two phase transaction. */
+	if (in_two_phase_transaction)
+		ipc_cond_wait(&two_phase_txn_cond);
+	assert(! in_two_phase_transaction);
 
 	struct wal_request *req;
 	req = (struct wal_request *) region_aligned_alloc_xc(
@@ -218,6 +225,7 @@ txn_write_prepare_to_wal(struct txn *txn, struct xrow_header *prepare_header)
 	 * but compiler warns.
 	 */
 	req->n_rows = 0;
+	in_two_phase_transaction = true;
 
 	recovery_fill_lsn(recovery, prepare_header);
 	prepare_header->tm = ev_now(loop());
@@ -376,6 +384,9 @@ txn_write_commit_to_wal(struct txn *txn)
 		assert(txn->in_prepare);
 		return txn_finish_2pc_to_wal(txn, IPROTO_COMMIT);
 	}
+	if (in_two_phase_transaction)
+		ipc_cond_wait(&two_phase_txn_cond);
+	assert(! in_two_phase_transaction);
 	struct wal_request *req =
 		(struct wal_request *)region_aligned_alloc_xc(&fiber()->gc,
 		sizeof(struct wal_request) + sizeof(req->rows[0]) * txn->n_rows,
@@ -418,6 +429,10 @@ txn_commit(struct txn *txn)
 		txn->engine->commit(txn, signature);
 	}
 	region_destroy(&txn->region);
+	if (txn->is_two_phase) {
+		in_two_phase_transaction = false;
+		ipc_cond_broadcast(&two_phase_txn_cond);
+	}
 	mempool_free(&txn_pool, txn);
 	/** Free volatile txn memory. */
 	fiber_gc();
@@ -465,6 +480,10 @@ txn_rollback()
 		txn->engine->rollback(txn);
 	}
 	region_destroy(&txn->region);
+	if (txn->is_two_phase) {
+		in_two_phase_transaction = false;
+		ipc_cond_broadcast(&two_phase_txn_cond);
+	}
 	mempool_free(&txn_pool, txn);
 	/** Free volatile txn memory. */
 	fiber_gc();
@@ -484,6 +503,7 @@ void
 txn_init()
 {
 	mempool_create(&txn_pool, cord_slab_cache(), sizeof(struct txn));
+	ipc_cond_create(&two_phase_txn_cond);
 }
 
 extern "C" {
